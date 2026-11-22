@@ -1,0 +1,53 @@
+name: Canary integration
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rollout:
+    name: Promotion and automatic abort
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Install kind and kubectl
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/canary-bin"
+          cd "$RUNNER_TEMP/canary-bin"
+          kind_release=https://github.com/kubernetes-sigs/kind/releases/download/v0.31.0
+          curl --fail --silent --show-error --location --retry 3 "$kind_release/kind-linux-amd64" -o kind-linux-amd64
+          curl --fail --silent --show-error --location --retry 3 "$kind_release/kind-linux-amd64.sha256sum" -o kind.sha256
+          sha256sum -c kind.sha256
+          mv kind-linux-amd64 kind
+          k8s=https://dl.k8s.io/release/v1.35.0/bin/linux/amd64
+          curl --fail --silent --show-error --location --retry 3 "$k8s/kubectl" -o kubectl
+          curl --fail --silent --show-error --location --retry 3 "$k8s/kubectl.sha256" -o kubectl.sha256
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum -c -
+          chmod +x kind kubectl
+          echo "$RUNNER_TEMP/canary-bin" >> "$GITHUB_PATH"
+      - name: Exercise live promotion and rollback
+        run: python -m canary_lab --output artifacts
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: canary-evidence
+          path: artifacts/
+          if-no-files-found: ignore
+      - name: Add result to job summary
+        if: success()
+        shell: bash
+        run: |
+          printf '## Canary proof\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'The live kind run promoted healthy v2 and aborted faulty v3. See the canary-evidence artifact for request counts and recovery timing.\n' >> "$GITHUB_STEP_SUMMARY"

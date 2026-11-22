@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout
+spec:
+  selector:
+    app: checkout
+  ports:
+    - port: 8080
+      targetPort: http
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: checkout-health
+spec:
+  args:
+    - name: candidate-hash
+  metrics:
+    - name: minimum-traffic
+      count: 3
+      interval: 4s
+      failureLimit: 0
+      successCondition: len(result) == 1 && result[0] >= 15
+      failureCondition: len(result) != 1 || result[0] < 15
+      provider:
+        prometheus:
+          address: http://prometheus.canary-lab.svc.cluster.local:9090
+          query: >
+            sum(increase(canary_lab_requests_total{revision="{{args.candidate-hash}}"}[18s]))
+            or vector(0)
+    - name: canary-5xx-rate
+      count: 3
+      interval: 4s
+      failureLimit: 0
+      successCondition: len(result) == 1 && result[0] <= 0.03
+      failureCondition: len(result) != 1 || result[0] > 0.03
+      provider:
+        prometheus:
+          address: http://prometheus.canary-lab.svc.cluster.local:9090
+          query: >
+            (sum(increase(canary_lab_requests_total{revision="{{args.candidate-hash}}",outcome="error"}[18s])) or vector(0))
+            /
+            clamp_min((sum(increase(canary_lab_requests_total{revision="{{args.candidate-hash}}"}[18s])) or vector(0)), 1)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: checkout
+spec:
+  minReadySeconds: 1
+  progressDeadlineSeconds: 150
+  progressDeadlineAbort: true
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: checkout
+  template:
+    metadata:
+      labels:
+        app: checkout
+        release: v1
+      annotations:
+        lab.example/failure-interval: "0"
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: api
+          image: canary-release-lab:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: LAB_RELEASE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['release']
+            - name: LAB_REVISION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['rollouts-pod-template-hash']
+            - name: LAB_FAILURE_INTERVAL
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['lab.example/failure-interval']
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 1
+          resources:
+            requests: {cpu: 25m, memory: 20Mi}
+            limits: {memory: 96Mi}
+  strategy:
+    canary:
+      maxSurge: 0
+      maxUnavailable: 1
+      steps:
+        - setWeight: 25
+        - pause: {duration: 18s}
+        - analysis:
+            templates:
+              - templateName: checkout-health
+            args:
+              - name: candidate-hash
+                valueFrom:
+                  podTemplateHashValue: Latest
+        - pause: {duration: 5s}
+        - setWeight: 100
