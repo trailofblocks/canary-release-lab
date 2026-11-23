@@ -2,6 +2,17 @@
 
 Deploy a small checkout API on Kubernetes, promote a healthy candidate, and automatically abort a candidate that returns HTTP 500s. Argo Rollouts makes the release decision using Prometheus metrics from live traffic.
 
+<!-- portfolio-demo-videos -->
+## Watch the demo
+
+Use it before sending a checkout update to every customer. The walkthrough has on-screen captions.
+
+![Captioned Canary Release Lab walkthrough](docs/demo/how-to.gif)
+
+[Download the narrated walkthrough](docs/demo/how-to.mp4?raw=true) · [Download the narrated overview](docs/demo/overview.mp4?raw=true)
+
+<!-- /portfolio-demo-videos -->
+
 ## Run the demo
 
 Use Python 3.12, Docker with Linux containers, kind, and kubectl. The runner uses a pinned kind node image and installs Argo Rollouts v1.10.2 and Prometheus v3.16.0.
